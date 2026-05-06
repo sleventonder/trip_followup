@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Öğrenci Konum Paylaşımı</title>
+    <!-- Firebase Uyumluluk Kütüphaneleri -->
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 50px; background: #f0f2f5; }
+        input { padding: 12px; width: 80%; max-width: 300px; border-radius: 8px; border: 1px solid #ccc; margin-bottom: 10px; }
+        button { padding: 12px 24px; background: #3498db; color: white; border: none; border-radius: 8px; cursor: pointer; }
+        #status { margin-top: 20px; font-weight: bold; color: #2c3e50; }
+    </style>
+</head>
+<body>
+    <h2>Gezi Takip Sistemi</h2>
+    <input type="text" id="studentName" placeholder="Adınızı Soyadınızı Girin"> <br>
+    <button onclick="startTracking()">Konum Paylaşmayı Başlat</button>
+    <p id="status">Lütfen isminizi girip butona basın.</p>
+
+    <script>
+        // Senin paylaştığın özel yapılandırma
+        const firebaseConfig = {
+            apiKey: "AIzaSyBpGeBTfFljxxza0WP50SeAqH88mx-0kpk",
+            authDomain: "trip-followup.firebaseapp.com",
+            databaseURL: "https://trip-followup-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "trip-followup",
+            storageBucket: "trip-followup.firebasestorage.app",
+            messagingSenderId: "377252304572",
+            appId: "1:377252304572:web:20b40a5d305e92b00022b9",
+            measurementId: "G-E6KQCV78WK"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        function startTracking() {
+            const name = document.getElementById('studentName').value.trim();
+            if (!name) return alert("Lütfen isminizi girin!");
+
+            if ("geolocation" in navigator) {
+                document.getElementById('status').innerText = "Konumunuz paylaşılıyor... Sayfayı kapatmayın.";
+                
+                // Konumu izle ve Firebase'e gönder
+                navigator.geolocation.watchPosition((pos) => {
+                    db.ref('students/' + name).set({
+                        name: name,
+                        lat: pos.coords.latitude,
+                        lng: pos.coords.longitude,
+                        time: new Date().toLocaleTimeString()
+                    });
+                }, (err) => {
+                    document.getElementById('status').innerText = "Hata: Konum izni verilmedi.";
+                }, { enableHighAccuracy: true });
+            } else {
+                alert("Tarayıcınız konum özelliğini desteklemiyor.");
+            }
+        }
+    </script>
+</body>
+</html>

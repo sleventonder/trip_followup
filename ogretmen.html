@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Öğretmen Takip Paneli - Spiderfier v3</title>
+    
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Firebase SDK (Compat) -->
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
+    
+    <!-- Spiderfier Kütüphanesi (Üst üste binmeyi önler) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/OverlappingMarkerSpiderfier-Leaflet/0.2.6/oms.min.js"></script>
+
+    <style>
+        body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #f0f2f5; display: flex; flex-direction: column; height: 100vh; }
+        #map { flex: 1; width: 100%; min-height: 400px; }
+        
+        .dashboard { 
+            display: grid; 
+            grid-template-columns: repeat(3, 1fr); 
+            background: #2c3e50; 
+            color: white; 
+            padding: 15px; 
+            text-align: center;
+        }
+        .stat span { display: block; font-size: 1.5em; font-weight: bold; }
+        .green { color: #2ecc71; }
+        .red { color: #e74c3c; }
+
+        .missing-list {
+            background: white;
+            padding: 15px;
+            max-height: 150px;
+            overflow-y: auto;
+            border-top: 2px solid #ddd;
+        }
+        .missing-list h4 { margin: 0 0 10px 0; color: #e74c3c; font-size: 0.9em; text-transform: uppercase; }
+        .student-tag {
+            display: inline-block;
+            background: #f8d7da;
+            color: #721c24;
+            padding: 5px 10px;
+            border-radius: 15px;
+            margin: 3px;
+            font-size: 0.85em;
+            border: 1px solid #f5c6cb;
+        }
+        #status-indicator {
+            position: absolute; top: 10px; right: 10px; z-index: 1000;
+            background: rgba(255,255,255,0.9); padding: 5px 12px; border-radius: 20px;
+            font-size: 12px; box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+    </style>
+</head>
+<body>
+
+<div id="status-indicator">Konum Bekleniyor...</div>
+<div id="map"></div>
+
+<div class="missing-list" id="missingPanel" style="display:none;">
+    <h4>⚠️ Bölge Dışındaki Öğrenciler (KIRMIZI)</h4>
+    <div id="missingNames"></div>
+</div>
+
+<div class="dashboard">
+    <div class="stat">TOPLAM<span id="tCount">0</span></div>
+    <div class="stat green">YEŞİL<span id="gCount">0</span></div>
+    <div class="stat red">KIRMIZI<span id="rCount">0</span></div>
+</div>
+
+<script>
+    // 1. Firebase Konfigürasyonu
+    const firebaseConfig = {
+        apiKey: "AIzaSyBpGeBTfFljxxza0WP50SeAqH88mx-0kpk",
+        authDomain: "trip-followup.firebaseapp.com",
+        databaseURL: "https://trip-followup-default-rtdb.europe-west1.firebasedatabase.app",
+        projectId: "trip-followup",
+        storageBucket: "trip-followup.firebasestorage.app",
+        messagingSenderId: "377252304572",
+        appId: "1:377252304572:web:20b40a5d305e92b00022b9"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    // 2. Harita Kurulumu
+    const map = L.map('map').setView([39.0, 35.0], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+    let busPos = null;
+    const safeRadius = 100; // 100 Metre
+    let safeCircle = null;
+    let teacherMarker = null;
+    let markers = {};
+
+    // 3. Spiderfier Kurulumu (Üst üste binme engelleyici)
+    const oms = new OverlappingMarkerSpiderfier(map, {
+        keepSpiderfied: true,
+        nearbyDistance: 20
+    });
+
+    const popup = L.popup();
+    oms.addListener('click', function(marker) {
+        marker.openPopup();
+    });
+
+    // 4. Öğretmen Konumu ve Takip
+    if ("geolocation" in navigator) {
+        navigator.geolocation.watchPosition((pos) => {
+            const lat = pos.coords.latitude;
+            const lng = pos.coords.longitude;
+            busPos = [lat, lng];
+
+            document.getElementById('status-indicator').innerText = "📍 Konumunuz Güncel";
+
+            if (!safeCircle) {
+                map.setView(busPos, 17);
+                safeCircle = L.circle(busPos, { radius: safeRadius, color: '#3498db', fillOpacity: 0.1 }).addTo(map);
+                teacherMarker = L.marker(busPos, { 
+                    icon: L.icon({
+                        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
+                        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+                        iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]
+                    })
+                }).addTo(map).bindPopup("Siz (Merkez)");
+                startSync();
+            } else {
+                safeCircle.setLatLng(busPos);
+                teacherMarker.setLatLng(busPos);
+            }
+        }, null, { enableHighAccuracy: true });
+    }
+
+    // 5. Öğrenci Verilerini Senkronize Et
+    function startSync() {
+        db.ref('students').on('value', (snapshot) => {
+            const data = snapshot.val();
+            let greenCount = 0;
+            let redCount = 0;
+            let missingHtml = "";
+
+            for (let id in data) {
+                const s = data[id];
+                const sLatLng = [s.lat, s.lng];
+                const dist = map.distance(sLatLng, busPos);
+                const isSafe = dist <= safeRadius;
+
+                if (isSafe) {
+                    greenCount++;
+                } else {
+                    redCount++;
+                    missingHtml += `<span class="student-tag">${s.name} (${Math.round(dist)}m)</span>`;
+                }
+
+                const markerColor = isSafe ? '#2ecc71' : '#e74c3c';
+
+                if (markers[id]) {
+                    markers[id].setLatLng(sLatLng);
+                    markers[id].getElement().querySelector('div').style.background = markerColor;
+                    markers[id].setPopupContent(`<b>${s.name}</b><br>Mesafe: ${Math.round(dist)}m`);
+                } else {
+                    const icon = L.divIcon({
+                        className: 'custom-div-icon',
+                        html: `<div style="background:${markerColor}; width:16px; height:16px; border-radius:50%; border:2px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.5);"></div>`,
+                        iconSize: [16, 16]
+                    });
+
+                    const newMarker = L.marker(sLatLng, { icon: icon });
+                    newMarker.bindPopup(`<b>${s.name}</b><br>Mesafe: ${Math.round(dist)}m`);
+                    
+                    newMarker.addTo(map);
+                    oms.addMarker(newMarker); // Spiderfier'a ekle
+                    markers[id] = newMarker;
+                }
+            }<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Öğretmen Takip Paneli - Pro Menü</title>
+    
+    <!-- Leaflet & Firebase SDK -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.17.1/firebase-database-compat.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/OverlappingMarkerSpiderfier-Leaflet/0.2.6/oms.min.js"></script>
+
+    <style>
+        :root { --safe: #2ecc71; --danger: #e74c3c; --dark: #2c3e50; }
+        body { margin: 0; font-family: 'Segoe UI', sans-serif; display: flex; height: 100vh; overflow: hidden; }
+        
+        /* Sol Menü Tasarımı */
+        .sidebar { width: 300px; background: white; border-right: 1px solid #ddd; display: flex; flex-direction: column; box-shadow: 2px 0 10px rgba(0,0,0,0.1); z-index: 2000; }
+        .sidebar-header { padding: 20px; background: var(--dark); color: white; text-align: center; }
+        .student-list { flex: 1; overflow-y: auto; padding: 10px; }
+        .student-item { display: flex; align-items: center; padding: 12px; border-bottom: 1px solid #eee; transition: 0.2s; border-radius: 8px; margin-bottom: 5px; }
+        .student-item:hover { background: #f8f9fa; }
+        
+        .status-dot { width: 12px; height: 12px; border-radius: 50%; margin-right: 15px; border: 2px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.2); }
+        .dot-green { background-color: var(--safe); }
+        .dot-red { background-color: var(--danger); }
+        
+        .student-info { flex: 1; }
+        .student-name { font-weight: bold; font-size: 0.95em; color: #333; }
+        .student-dist { font-size: 0.8em; color: #7f8c8d; }
+
+        /* Sağ Taraf - Harita ve Dashboard */
+        .main-content { flex: 1; display: flex; flex-direction: column; position: relative; }
+        #map { flex: 1; width: 100%; }
+        
+        .dashboard-mini { display: grid; grid-template-columns: repeat(3, 1fr); background: var(--dark); color: white; padding: 15px; text-align: center; }
+        .stat-box span { display: block; font-size: 1.4em; font-weight: bold; }
+        
+        @media (max-width: 768px) {
+            body { flex-direction: column; }
+            .sidebar { width: 100%; height: 30%; }
+            .main-content { height: 70%; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Sol Menü -->
+<div class="sidebar">
+    <div class="sidebar-header">
+        <h3 style="margin:0">Öğrenci Listesi</h3>
+        <small id="update-time">Bekleniyor...</small>
+    </div>
+    <div class="student-list" id="listContent">
+        <!-- Öğrenciler buraya dinamik dolacak -->
+    </div>
+</div>
+
+<!-- Sağ Ana Alan -->
+<div class="main-content">
+    <div id="map"></div>
+    
+    <div class="dashboard-mini">
+        <div class="stat-box">Toplam<span id="tCount">0</span></div>
+        <div class="stat-box green">İçerde<span id="gCount">0</span></div>
+        <div class="stat-box red">Dışarda<span id="rCount">0</span></div>
+    </div>
+</div>
+
+<script>
+    const firebaseConfig = {
+        apiKey: "AIzaSyBpGeBTfFljxxza0WP50SeAqH88mx-0kpk",
+        authDomain: "trip-followup.firebaseapp.com",
+        databaseURL: "https://trip-followup-default-rtdb.europe-west1.firebasedatabase.app",
+        projectId: "trip-followup",
+        storageBucket: "trip-followup.firebasestorage.app",
+        messagingSenderId: "377252304572",
+        appId: "1:377252304572:web:20b40a5d305e92b00022b9"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    const map = L.map('map').setView([39.0, 35.0], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+    let busPos = null;
+    const safeRadius = 100;
+    let safeCircle = null;
+    let markers = {};
+
+    const oms = new OverlappingMarkerSpiderfier(map, { keepSpiderfied: true, nearbyDistance: 25 });
+    oms.addListener('click', (m) => m.openPopup());
+
+    if ("geolocation" in navigator) {
+        navigator.geolocation.watchPosition((pos) => {
+            const lat = pos.coords.latitude;
+            const lng = pos.coords.longitude;
+            busPos = [lat, lng];
+            document.getElementById('update-time').innerText = "Anlık Takip Aktif";
+
+            if (!safeCircle) {
+                map.setView(busPos, 17);
+                safeCircle = L.circle(busPos, { radius: safeRadius, color: '#3498db', fillOpacity: 0.15 }).addTo(map);
+                L.marker(busPos, { zIndexOffset: 1000 }).addTo(map).bindPopup("Siz (Merkez)");
+                syncStudents();
+            } else {
+                safeCircle.setLatLng(busPos);
+            }
+        }, null, { enableHighAccuracy: true });
+    }
+
+    function syncStudents() {
+        db.ref('students').on('value', (snapshot) => {
+            const data = snapshot.val();
+            let g = 0, r = 0;
+            let listHtml = "";
+
+            // Öğrencileri mesafeye göre sıralayalım (Dışarda olanlar üste gelsin)
+            const sortedStudents = Object.values(data || {}).sort((a, b) => {
+                const d1 = map.distance([a.lat, a.lng], busPos);
+                const d2 = map.distance([b.lat, b.lng], busPos);
+                return d2 - d1; 
+            });
+
+            sortedStudents.forEach(s => {
+                const dist = Math.round(map.distance([s.lat, s.lng], busPos));
+                const isSafe = dist <= safeRadius;
+                isSafe ? g++ : r++;
+                
+                const statusClass = isSafe ? 'dot-green' : 'dot-red';
+                const colorHex = isSafe ? '#2ecc71' : '#e74c3c';
+
+                // Menü Listesi Oluşturma
+                listHtml += `
+                    <div class="student-item">
+                        <div class="status-dot ${statusClass}"></div>
+                        <div class="student-info">
+                            <div class="student-name">${s.name}</div>
+                            <div class="student-dist">${dist} metre uzakta</div>
+                        </div>
+                    </div>
+                `;
+
+                // Harita Marker Güncelleme
+                if (markers[s.name]) {
+                    markers[s.name].setLatLng([s.lat, s.lng]);
+                    markers[s.name].getElement().querySelector('div').style.background = colorHex;
+                    markers[s.name].setPopupContent(`<b>${s.name}</b><br>${dist}m uzakta`);
+                } else {
+                    const icon = L.divIcon({
+                        className: 'custom-div-icon',
+                        html: `<div style="background:${colorHex}; width:16px; height:16px; border-radius:50%; border:2px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.5);"></div>`,
+                        iconSize: [16, 16]
+                    });
+                    const m = L.marker([s.lat, s.lng], { icon: icon });
+                    m.bindPopup(`<b>${s.name}</b><br>${dist}m uzakta`);
+                    m.addTo(map);
+                    oms.addMarker(m);
+                    markers[s.name] = m;
+                }
+            });
+
+            document.getElementById('listContent').innerHTML = listHtml;
+            document.getElementById('tCount').innerText = sortedStudents.length;
+            document.getElementById('gCount').innerText = g;
+            document.getElementById('rCount').innerText = r;
+        });
+    }
+</script>
+</body>
+</html>
+
+            // Arayüzü Güncelle
+            document.getElementById('tCount').innerText = Object.keys(data || {}).length;
+            document.getElementById('gCount').innerText = greenCount;
+            document.getElementById('rCount').innerText = redCount;
+
+            // Kayıp Paneli Kontrolü
+            const panel = document.getElementById('missingPanel');
+            if (redCount > 0) {
+                panel.style.display = "block";
+                document.getElementById('missingNames').innerHTML = missingHtml;
+            } else {
+                panel.style.display = "none";
+            }
+        });
+    }
+</script>
+</body>
+</html>
