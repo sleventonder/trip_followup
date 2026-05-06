@@ -43,15 +43,15 @@
             if ("geolocation" in navigator) {
                 document.getElementById('status').innerText = "Konumunuz paylaşılıyor... Sayfayı kapatmayın.";
                 
-                // Konumu izle ve Firebase'e gönder
-                navigator.geolocation.watchPosition((pos) => {
-                 // ogrenci.html içindeki set fonksiyonunu böyle güncelle:
-db.ref('students/' + name).set({
-    name: name,
-    lat: pos.coords.latitude,
-    lng: pos.coords.longitude,
-    timestamp: Date.now() // <--- Bu satır çok önemli!
-});
+                // Öğrencinin konum gönderme fonksiyonu
+navigator.geolocation.watchPosition((pos) => {
+    db.ref('students/' + name).set({
+        name: name,
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        timestamp: Date.now() // <--- BU SATIRIN OLDUĞUNDAN EMİN OLUN
+    });
+}, (err) => { alert("Konum izni şart!"); }, { enableHighAccuracy: true });
                 }, (err) => {
                     document.getElementById('status').innerText = "Hata: Konum izni verilmedi.";
                 }, { enableHighAccuracy: true });
