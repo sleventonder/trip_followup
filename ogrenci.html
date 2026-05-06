@@ -45,12 +45,13 @@
                 
                 // Konumu izle ve Firebase'e gönder
                 navigator.geolocation.watchPosition((pos) => {
-                    db.ref('students/' + name).set({
-                        name: name,
-                        lat: pos.coords.latitude,
-                        lng: pos.coords.longitude,
-                        time: new Date().toLocaleTimeString()
-                    });
+                 // ogrenci.html içindeki set fonksiyonunu böyle güncelle:
+db.ref('students/' + name).set({
+    name: name,
+    lat: pos.coords.latitude,
+    lng: pos.coords.longitude,
+    timestamp: Date.now() // <--- Bu satır çok önemli!
+});
                 }, (err) => {
                     document.getElementById('status').innerText = "Hata: Konum izni verilmedi.";
                 }, { enableHighAccuracy: true });
